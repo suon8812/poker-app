@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRoom, saveRoom } from '@/lib/kv';
-import { getPusherServer, CHANNELS, EVENTS } from '@/lib/pusher';
+import { getPusherServer, safeTrigger, CHANNELS, EVENTS } from '@/lib/pusher';
 import { getIdentity } from '@/lib/identity';
 import { applyAction, handleTurnTimeout } from '@/lib/poker/gameEngine';
 import { ActionType } from '@/lib/poker/types';
@@ -41,7 +41,7 @@ export async function POST(req: NextRequest, { params }: { params: { roomId: str
   await saveRoom(params.roomId, newState);
 
   const pusherServer = getPusherServer();
-  await pusherServer.trigger(CHANNELS.room(params.roomId), EVENTS.GAME_STATE_UPDATED, newState);
+  await safeTrigger(pusherServer, CHANNELS.room(params.roomId), EVENTS.GAME_STATE_UPDATED, newState);
 
   return NextResponse.json({ success: true, state: newState });
 }

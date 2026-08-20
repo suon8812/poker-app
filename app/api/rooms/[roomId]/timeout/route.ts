@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRoom, saveRoom } from '@/lib/kv';
-import { getPusherServer, CHANNELS, EVENTS } from '@/lib/pusher';
+import { getPusherServer, safeTrigger, CHANNELS, EVENTS } from '@/lib/pusher';
 import { handleTurnTimeout } from '@/lib/poker/gameEngine';
 
 /**
@@ -24,7 +24,7 @@ export async function POST(_req: NextRequest, { params }: { params: { roomId: st
   await saveRoom(params.roomId, newState);
 
   const pusherServer = getPusherServer();
-  await pusherServer.trigger(CHANNELS.room(params.roomId), EVENTS.GAME_STATE_UPDATED, newState);
+  await safeTrigger(pusherServer, CHANNELS.room(params.roomId), EVENTS.GAME_STATE_UPDATED, newState);
 
   return NextResponse.json({ success: true, changed: true, state: newState });
 }

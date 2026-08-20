@@ -17,6 +17,13 @@ export async function POST(req: NextRequest) {
   }
 
   const pusherServer = getPusherServer();
+  if (!pusherServer) {
+    return NextResponse.json(
+      { error: 'Pusher 서버 환경변수가 설정되지 않았습니다. Vercel 프로젝트의 환경변수를 확인해주세요.' },
+      { status: 500 }
+    );
+  }
+
   const authResponse = pusherServer.authorizeChannel(socketId, channelName, {
     user_id: identity.userId,
     user_info: { nickname: identity.nickname },

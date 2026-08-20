@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getRoom, saveRoom, removeRoom } from '@/lib/kv';
-import { getPusherServer, CHANNELS, EVENTS } from '@/lib/pusher';
+import { getPusherServer, safeTrigger, CHANNELS, EVENTS } from '@/lib/pusher';
 import { getIdentity } from '@/lib/identity';
 import { leaveRoom, isRoomEmpty } from '@/lib/store/roomStore';
 
@@ -16,22 +16,21 @@ export async function POST(req: NextRequest, { params }: { params: { roomId: str
   }
 
   const newState = leaveRoom(state, identity.userId);
-
   const pusherServer = getPusherServer();
 
   if (isRoomEmpty(newState)) {
     await removeRoom(params.roomId);
-    await pusherServer.trigger(CHANNELS.lobby, EVENTS.ROOM_LIST_UPDATED, { roomId: params.roomId, removed: true });
+    await safeTrigger(pusherServer, CHANNELS.lobby, EVENTS.ROOM_LIST_UPDATED, { roomId: params.roomId, removed: true });
     return NextResponse.json({ success: true });
   }
 
   await saveRoom(params.roomId, newState);
-  await pusherServer.trigger(CHANNELS.room(params.roomId), EVENTS.GAME_STATE_UPDATED, newState);
-  await pusherServer.trigger(CHANNELS.room(params.roomId), EVENTS.PLAYER_LEFT, {
+  await safeTrigger(pusherServer, CHANNELS.room(params.roomId), EVENTS.GAME_STATE_UPDATED, newState);
+  await safeTrigger(pusherServer, CHANNELS.room(params.roomId), EVENTS.PLAYER_LEFT, {
     userId: identity.userId,
     nickname: identity.nickname,
   });
-  await pusherServer.trigger(CHANNELS.lobby, EVENTS.ROOM_LIST_UPDATED, { roomId: params.roomId });
+  await safeTrigger(pusherServer, CHANNELS.lobby, EVENTS.ROOM_LIST_UPDATED, { roomId: params.roomId });
 
   return NextResponse.json({ success: true });
 }

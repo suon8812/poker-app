@@ -35,13 +35,21 @@ export default function LobbyPage() {
   const [bigBlind, setBigBlind] = useState(10);
   const [nickname, setNickname] = useState('');
   const [loading, setLoading] = useState(false);
+  const [createError, setCreateError] = useState('');
+  const [listError, setListError] = useState('');
   const router = useRouter();
 
   const refreshRooms = () => {
     fetch('/api/rooms')
-      .then(r => r.json())
-      .then(setRooms)
-      .catch(() => {});
+      .then(async r => {
+        const data = await r.json();
+        if (!r.ok || !Array.isArray(data)) {
+          throw new Error(data?.error || '방 목록을 불러오지 못했습니다.');
+        }
+        setRooms(data);
+        setListError('');
+      })
+      .catch(err => setListError(err.message));
   };
 
   useEffect(() => {
@@ -54,15 +62,24 @@ export default function LobbyPage() {
 
     refreshRooms();
 
-    const pusher = getPusherClient();
-    const channel = pusher.subscribe(CHANNELS.lobby);
-    channel.bind(EVENTS.ROOM_LIST_UPDATED, refreshRooms);
+    // Pusher 설정이 잘못되어도 로비 자체는 폴링으로 계속 동작하도록 격리
+    let cleanupPusher: (() => void) | null = null;
+    try {
+      const pusher = getPusherClient();
+      const channel = pusher.subscribe(CHANNELS.lobby);
+      channel.bind(EVENTS.ROOM_LIST_UPDATED, refreshRooms);
+      cleanupPusher = () => {
+        channel.unbind(EVENTS.ROOM_LIST_UPDATED, refreshRooms);
+        pusher.unsubscribe(CHANNELS.lobby);
+      };
+    } catch (err) {
+      console.error('[lobby] Pusher 연결 실패, 폴링으로 대체합니다:', err);
+    }
 
-    const interval = setInterval(refreshRooms, 8000); // 폴백 폴링
+    const interval = setInterval(refreshRooms, 5000); // 실시간 갱신이 안 될 경우를 위한 폴백 폴링
 
     return () => {
-      channel.unbind(EVENTS.ROOM_LIST_UPDATED, refreshRooms);
-      pusher.unsubscribe(CHANNELS.lobby);
+      cleanupPusher?.();
       clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -70,6 +87,7 @@ export default function LobbyPage() {
 
   const createRoom = async () => {
     setLoading(true);
+    setCreateError('');
     try {
       const res = await fetch('/api/rooms', {
         method: 'POST',
@@ -80,8 +98,21 @@ export default function LobbyPage() {
           bigBlind,
         }),
       });
-      const data = await res.json();
-      if (data.roomId) router.push(`/room/${data.roomId}`);
+
+      let data: any;
+      try {
+        data = await res.json();
+      } catch {
+        throw new Error(`서버 오류가 발생했습니다 (상태 코드 ${res.status}). Vercel 배포 로그를 확인해주세요.`);
+      }
+
+      if (!res.ok || !data.roomId) {
+        throw new Error(data?.error || '방을 만들지 못했습니다.');
+      }
+
+      router.push(`/room/${data.roomId}`);
+    } catch (err: any) {
+      setCreateError(err.message || '알 수 없는 오류가 발생했습니다.');
     } finally {
       setLoading(false);
     }
@@ -101,6 +132,12 @@ export default function LobbyPage() {
         >
           + 새 테이블 만들기
         </button>
+
+        {listError && (
+          <div className="bg-red-950/50 border border-red-500/30 rounded-xl p-3 text-red-300 text-sm">
+            ⚠ {listError}
+          </div>
+        )}
 
         <div className="grid gap-3">
           {rooms.map(room => (
@@ -155,6 +192,11 @@ export default function LobbyPage() {
                 ))}
               </div>
             </div>
+            {createError && (
+              <div className="bg-red-950/50 border border-red-500/30 rounded-lg p-3 text-red-300 text-sm">
+                ⚠ {createError}
+              </div>
+            )}
             <div className="flex gap-2 pt-2">
               <button
                 onClick={() => setShowCreate(false)}

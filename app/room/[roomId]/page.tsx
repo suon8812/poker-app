@@ -47,27 +47,46 @@ export default function RoomPage({ params }: { params: { roomId: string } }) {
       })
       .catch(err => active && setError(err.message));
 
-    const pusher = getPusherClient();
-    const channel = pusher.subscribe(CHANNELS.room(roomId));
+    // Pusher 연결이 실패해도(설정 누락 등) 방 페이지 자체는 폴링으로 계속 동작하도록 격리
+    let cleanupPusher: (() => void) | null = null;
+    try {
+      const pusher = getPusherClient();
+      const channel = pusher.subscribe(CHANNELS.room(roomId));
 
-    channel.bind(EVENTS.GAME_STATE_UPDATED, (newState: GameState) => {
-      if (active) setState(newState);
-    });
-    channel.bind(EVENTS.PLAYER_JOINED, (data: { nickname: string }) => {
-      pushToast(`${data.nickname}님이 입장했습니다.`);
-    });
-    channel.bind(EVENTS.PLAYER_LEFT, (data: { nickname: string }) => {
-      pushToast(`${data.nickname}님이 퇴장했습니다.`);
-    });
+      channel.bind(EVENTS.GAME_STATE_UPDATED, (newState: GameState) => {
+        if (active) setState(newState);
+      });
+      channel.bind(EVENTS.PLAYER_JOINED, (data: { nickname: string }) => {
+        pushToast(`${data.nickname}님이 입장했습니다.`);
+      });
+      channel.bind(EVENTS.PLAYER_LEFT, (data: { nickname: string }) => {
+        pushToast(`${data.nickname}님이 퇴장했습니다.`);
+      });
 
-    // presence 채널: 다른 유저의 연결 끊김을 감지해 서버에 알림 (재접속 처리 보완)
-    channel.bind('pusher:member_removed', (member: { id: string }) => {
-      fetch(`/api/rooms/${roomId}/disconnect`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ userId: member.id }),
-      }).catch(() => {});
-    });
+      // presence 채널: 다른 유저의 연결 끊김을 감지해 서버에 알림 (재접속 처리 보완)
+      channel.bind('pusher:member_removed', (member: { id: string }) => {
+        fetch(`/api/rooms/${roomId}/disconnect`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ userId: member.id }),
+        }).catch(() => {});
+      });
+
+      cleanupPusher = () => {
+        channel.unbind_all();
+        pusher.unsubscribe(CHANNELS.room(roomId));
+      };
+    } catch (err) {
+      console.error('[room] Pusher 연결 실패, 폴링으로 대체합니다:', err);
+    }
+
+    // Pusher 실시간 갱신이 실패하는 경우를 대비한 폴백 폴링
+    const pollInterval = setInterval(() => {
+      fetch(`/api/rooms/${roomId}`)
+        .then(r => (r.ok ? r.json() : null))
+        .then(data => active && data && setState(data))
+        .catch(() => {});
+    }, 4000);
 
     const leaveBeacon = () => {
       navigator.sendBeacon?.(`/api/rooms/${roomId}/leave`, new Blob([], { type: 'application/json' }));
@@ -76,8 +95,8 @@ export default function RoomPage({ params }: { params: { roomId: string } }) {
 
     return () => {
       active = false;
-      channel.unbind_all();
-      pusher.unsubscribe(CHANNELS.room(roomId));
+      cleanupPusher?.();
+      clearInterval(pollInterval);
       window.removeEventListener('beforeunload', leaveBeacon);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
